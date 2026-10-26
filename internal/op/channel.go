@@ -102,9 +102,9 @@ func ChannelUpdate(detail *model.ChannelDetail, ctx context.Context) (*model.Cha
 		// 逐列点名而不整行覆盖: 全量提交下 enabled 置假与被清空的可选字段都必须落库, 按零值跳过会写不进去;
 		// 而统计列由转发累加, 不在提交范围内, 整行覆盖会把它抹回提交时的旧值。
 		if err := tx.Model(&model.Channel{}).Where("id = ?", detail.ID).
-			Select("name", "dialect", "enabled", "base_url",
-				"openai_chat_completion_path", "openai_response_path", "anthropic_message_path",
-				"proxy", "channel_proxy", "custom_header", "param_override", "match_regex").
+Select("name", "dialect", "enabled", "base_url",
+					"openai_chat_completion_path", "openai_response_path", "anthropic_message_path",
+					"proxy", "channel_proxy", "custom_header", "param_override", "match_regex", "auto_sync").
 			Updates(&model.Channel{ChannelConfig: detail.ChannelConfig}).Error; err != nil {
 			return fmt.Errorf("failed to update channel: %w", err)
 		}
@@ -574,7 +574,11 @@ func syncChannelModels(tx *gorm.DB, channelID int, requested []string) error {
 			delete(existingByName, requestedModel)
 			continue
 		}
-		if err := tx.Create(&model.ChannelModel{ChannelID: channelID, Name: requestedModel}).Error; err != nil {
+		if err := tx.Create(&model.ChannelModel{
+			ChannelID: channelID,
+			Name:      requestedModel,
+			Source:    model.ChannelModelSourceManual,
+		}).Error; err != nil {
 			return fmt.Errorf("failed to create channel model: %w", err)
 		}
 	}

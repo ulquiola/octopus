@@ -38,6 +38,7 @@ type ChannelConfig struct {
 	CustomHeader             []CustomHeader `json:"custom_header" gorm:"serializer:json"`                                                               // 追加到上游请求的 Header。
 	ParamOverride            string         `json:"param_override"`                                                                                     // 请求参数覆盖配置; 留空表示不覆盖。
 	MatchRegex               string         `json:"match_regex"`                                                                                        // 拉取模型列表时的过滤表达式; 留空表示不过滤。
+	AutoSync                 bool           `json:"auto_sync" gorm:"default:false"`                                                                     // 是否参与定时同步上游模型。
 }
 
 // 单个上游渠道的共享配置; 路径按协议分别配置, 凭据由 ChannelKey 提供。
@@ -65,12 +66,21 @@ type ChannelKey struct {
 	StatsMetrics         // 该凭据自身的累计统计。
 }
 
+// 渠道模型的来源; 自动模型由定时同步维护, 手动模型只在编辑表单中增删。
+type ChannelModelSource string
+
+const (
+	ChannelModelSourceManual ChannelModelSource = "manual" // 人工添加或编辑表单保留的模型。
+	ChannelModelSourceAuto   ChannelModelSource = "auto"   // 由定时同步拉取并维护的模型。
+)
+
 // 渠道提供的单个上游模型。
 type ChannelModel struct {
-	ID           int    `json:"id" gorm:"primaryKey"`                                      // 渠道模型主键。
-	ChannelID    int    `json:"channel_id" gorm:"not null;index:idx_channel_model,unique"` // 所属渠道 ID。
-	Name         string `json:"name" gorm:"not null;index:idx_channel_model,unique"`       // 上游模型名称。
-	StatsMetrics        // 该模型自身的累计统计。
+	ID           int                `json:"id" gorm:"primaryKey"`                                      // 渠道模型主键。
+	ChannelID    int                `json:"channel_id" gorm:"not null;index:idx_channel_model,unique"` // 所属渠道 ID。
+	Name         string             `json:"name" gorm:"not null;index:idx_channel_model,unique"`       // 上游模型名称。
+	Source       ChannelModelSource `json:"-" gorm:"not null;default:manual"`                          // 模型来源; 自动模型由同步任务维护。
+	StatsMetrics                    // 该模型自身的累计统计。
 }
 
 // 渠道内的一条上游授权: 指定模型使用指定凭据时支持的协议集合, 也是转发的最小单位。
