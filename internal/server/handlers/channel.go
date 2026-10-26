@@ -82,10 +82,20 @@ func getChannelDetail(c *gin.Context) {
 	resp.Success(c, detail)
 }
 
-// listChannelStats 返回全部渠道及其模型的累计统计, 也是渠道列表页的数据来源。
+// listChannelStats 返回渠道及其模型的累计统计; 带 period 时返回该周期内的统计。
 // 不带整份配置: 统计每次转发都在变, 界面按更短的间隔刷新它, 而路径, 代理与凭据明文只在编辑时用得上。
 func listChannelStats(c *gin.Context) {
-	resp.Success(c, op.ChannelStatsList())
+	periodText := c.Query("period")
+	if periodText == "" {
+		resp.Success(c, op.ChannelStatsList())
+		return
+	}
+	period, err := strconv.Atoi(periodText)
+	if err != nil || (period != 1 && period != 7 && period != 30) {
+		resp.Error(c, http.StatusBadRequest, "period must be 1, 7 or 30")
+		return
+	}
+	resp.Success(c, op.ChannelStatsListPeriod(period))
 }
 
 // listChannelGrant 返回全部渠道授权候选, 供分组页选取成员。

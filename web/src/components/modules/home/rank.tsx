@@ -113,7 +113,8 @@ function RankCard({
 
 // Rank 并列渠道榜和模型榜, 两榜各自独立排序。
 export function Rank() {
-    const { data: channelStats } = useChannelStats();
+    const period = useHomeViewStore((state) => state.chartPeriod);
+    const { data: channelStats } = useChannelStats(Number(period) as 1 | 7 | 30);
     const t = useTranslations('home.rank');
     const channelSortMode = useHomeViewStore((state) => state.channelRankSortMode);
     const setChannelSortMode = useHomeViewStore((state) => state.setChannelRankSortMode);

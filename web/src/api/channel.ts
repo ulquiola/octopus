@@ -1,6 +1,6 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from './client';
-import { channelStatsQueryOptions, groupListQueryOptions, modelListQueryOptions } from './queries';
+import { groupListQueryOptions, modelListQueryOptions } from './queries';
 import { formatStatsMetrics, type StatsMetrics, type StatsMetricsFormatted } from './stats';
 
 // Protocol 是渠道支持的上游线协议位掩码，位值与后端 model.Protocol 一致，不可变更。
@@ -141,26 +141,31 @@ export function useChannelGrantList(enabled = true) {
 
 // channelStatsFormattedQueryOptions 统一渠道统计查询, 格式化和刷新策略。
 // 与配置分开刷新: 统计每次转发都在变, 配置只在人工改动后由 mutation 失效。
-const channelStatsFormattedQueryOptions = queryOptions({
-    ...channelStatsQueryOptions,
-    select: (data) => data.map((item): ChannelStatsFormatted => ({
-        channel_id: item.channel_id,
-        channel_name: item.channel_name,
-        enabled: item.enabled,
-        models: item.models.map((channelModel) => ({
-            model_id: channelModel.model_id,
-            model_name: channelModel.model_name,
-            formatted: formatStatsMetrics(channelModel),
+function channelStatsFormattedQueryOptions(period?: 1 | 7 | 30) {
+    return queryOptions({
+        queryKey: ['channels', 'stats', period ?? 'all'],
+        queryFn: () => apiRequest<ChannelStats[]>(
+            `/api/v1/channel/stats${period ? `?period=${period}` : ''}`,
+        ),
+        select: (data) => data.map((item): ChannelStatsFormatted => ({
+            channel_id: item.channel_id,
+            channel_name: item.channel_name,
+            enabled: item.enabled,
+            models: item.models.map((channelModel) => ({
+                model_id: channelModel.model_id,
+                model_name: channelModel.model_name,
+                formatted: formatStatsMetrics(channelModel),
+            })),
+            formatted: formatStatsMetrics(item),
         })),
-        formatted: formatStatsMetrics(item),
-    })),
-    refetchInterval: 30000,
-    refetchOnMount: 'always',
-});
+        refetchInterval: 30000,
+        refetchOnMount: 'always',
+    });
+}
 
-// useChannelStats 获取全部渠道及其模型的展示用统计, 也是渠道列表页的数据来源。
-export function useChannelStats(enabled = true) {
-    return useQuery({ ...channelStatsFormattedQueryOptions, enabled });
+// useChannelStats 获取全部渠道及其模型的展示用统计; period 为空时为全量累计。
+export function useChannelStats(period?: 1 | 7 | 30, enabled = true) {
+    return useQuery({ ...channelStatsFormattedQueryOptions(period), enabled });
 }
 
 /**

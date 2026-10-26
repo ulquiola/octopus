@@ -21,7 +21,7 @@ export const apiKeyListQueryOptions = queryOptions({
 // channelStatsQueryOptions 供页面查询和启动预取共享渠道统计定义。
 // 渠道页与首页榜单共用这一条: 统计自带渠道名称, 启停与模型个数, 两处都无需再拉渠道配置。
 export const channelStatsQueryOptions = queryOptions({
-    queryKey: ['channels', 'stats'],
+    queryKey: ['channels', 'stats', 'all'],
     queryFn: () => apiRequest<ChannelStats[]>('/api/v1/channel/stats'),
 });
 
