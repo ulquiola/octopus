@@ -164,6 +164,22 @@
             "hint": "Applied along with the channel's own filter when fetching models (AND); empty means no filter"
         },
         "saved": "Saved",
+        "llmSync": {
+            "title": "Channel Sync",
+            "syncInterval": {
+                "label": "Auto Sync Interval (hours)",
+                "placeholder": "Enter interval in hours"
+            },
+            "manualSync": {
+                "label": "Manual Channel Sync",
+                "button": "Sync Now",
+                "syncing": "Syncing..."
+            },
+            "lastSync": "Last Sync",
+            "neverSynced": "Never synced",
+            "syncSuccess": "Channel synced successfully",
+            "syncFailed": "Failed to sync channel"
+        },
         "backup": {
             "title": "Backup / Restore",
             "export": {
@@ -476,6 +492,7 @@
             "modelRefreshEmpty": "No models returned",
             "channelProxy": "Channel proxy",
             "matchRegex": "Match regex",
+            "autoSync": "Auto Sync",
             "paramOverride": "Param override",
             "customHeader": "Custom headers",
             "customHeaderKey": "Header key",

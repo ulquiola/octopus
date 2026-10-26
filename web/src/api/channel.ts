@@ -73,6 +73,7 @@ export type ChannelDetail = {
     param_override: string;
     channel_proxy: string;
     match_regex: string;
+    auto_sync: boolean; // 是否参与定时同步上游模型。
 };
 
 // ChannelModelStats 是单个渠道模型的累计统计，自带名称。
@@ -295,5 +296,25 @@ export function useFetchModel() {
     return useMutation({
         mutationFn: (data: FetchModelRequest) =>
             apiRequest<FetchModel[]>('/api/v1/channel/fetch-model', { method: 'POST', body: data }),
+    });
+}
+
+// useSyncChannel 手动触发一次渠道模型同步。
+export function useSyncChannel() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: () => apiRequest<null>('/api/v1/channel/sync', { method: 'POST' }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['channels'] });
+        },
+    });
+}
+
+// useLastSyncTime 获取最近一次渠道模型同步结束时间。
+export function useLastSyncTime() {
+    return useQuery({
+        queryKey: ['channels', 'last-sync-time'],
+        queryFn: () => apiRequest<string>('/api/v1/channel/last-sync-time'),
+        refetchInterval: 30000,
     });
 }

@@ -164,6 +164,22 @@
             "hint": "渠道获取模型时与渠道自身的过滤表达式同时生效（AND），留空不过滤"
         },
         "saved": "已保存",
+        "llmSync": {
+            "title": "渠道同步",
+            "syncInterval": {
+                "label": "自动同步间隔（小时）",
+                "placeholder": "请输入间隔（小时）"
+            },
+            "manualSync": {
+                "label": "手动同步渠道",
+                "button": "立即同步",
+                "syncing": "同步中..."
+            },
+            "lastSync": "上次同步",
+            "neverSynced": "从未同步",
+            "syncSuccess": "渠道同步成功",
+            "syncFailed": "渠道同步失败"
+        },
         "backup": {
             "title": "备份 / 恢复",
             "export": {
@@ -476,6 +492,7 @@
             "modelRefreshEmpty": "未获取到模型",
             "channelProxy": "渠道代理",
             "matchRegex": "匹配正则",
+            "autoSync": "自动同步",
             "paramOverride": "参数覆盖",
             "customHeader": "自定义 Header",
             "customHeaderKey": "Header Key",
