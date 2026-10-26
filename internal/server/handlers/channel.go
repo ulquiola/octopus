@@ -185,8 +185,8 @@ func addChannelModelPrices(modelNames []string, ctx context.Context) error {
 
 // fetchModel 按提交的渠道配置与凭据拉取上游模型列表, 并按过滤表达式筛选后返回。
 // 同时探测 OpenAI 与 Anthropic 两侧, 谁返回了哪些模型, 就给对应协议位打勾: 协议支持由探测结果决定, 无需用户声明。
-// OpenAI 侧记为 Responses 而不是 Chat: Chat Completions 已被官方标记弃用, 新渠道应默认走 Responses,
-// 仍需 Chat 的渠道由用户在界面上手动勾选。两侧的 /models 地址与认证形态不同, 故必须分别探测:
+// OpenAI 侧记为 Chat: 自用分支默认走 Chat Completions, 需要 Responses 的渠道由用户手动勾选。
+// 两侧的 /models 地址与认证形态不同, 故必须分别探测:
 // 单协议上游只有一侧会成功, "哪侧成功" 本身就是协议支持的证据。
 // 只有两侧都失败才算失败; 一侧失败属正常情况, 单协议上游本就只有一侧讲得通, 按成功那侧的结果返回。
 func fetchModel(c *gin.Context) {
@@ -303,7 +303,7 @@ func fetchModel(c *gin.Context) {
 		if _, ok := protocolsByModel[name]; !ok {
 			order = append(order, name)
 		}
-		protocolsByModel[name] |= model.ProtocolOpenAIResponse
+		protocolsByModel[name] |= model.ProtocolOpenAIChatCompletion
 	}
 	for _, name := range anthropicModels {
 		matched, err := matches(name)
