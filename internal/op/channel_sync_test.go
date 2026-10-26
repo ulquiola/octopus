@@ -47,3 +47,16 @@ func TestBuildChannelModelSyncPlanFailedKeyUntouched(t *testing.T) {
 		t.Fatalf("failed key must not receive grants")
 	}
 }
+
+func TestFilterDeletableModelIDs(t *testing.T) {
+	candidates := []int{2, 3}
+	grants := []model.ChannelGrant{
+		{ChannelModelID: 2, ChannelKeyID: 10}, // 未同步凭据仍在用模型 2。
+		{ChannelModelID: 3, ChannelKeyID: 20}, // 仅同步成功的凭据在用模型 3。
+	}
+	unsynced := map[int]struct{}{10: {}}
+	filtered := filterDeletableModelIDs(candidates, grants, unsynced)
+	if len(filtered) != 1 || filtered[0] != 3 {
+		t.Fatalf("filtered = %v", filtered)
+	}
+}

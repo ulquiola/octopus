@@ -79,6 +79,26 @@ func buildChannelModelSyncPlan(
 	return plan
 }
 
+// filterDeletableModelIDs 从待删除模型中剔除仍被未同步凭据引用的模型。
+func filterDeletableModelIDs(candidates []int, grants []model.ChannelGrant, unsyncedKeyIDs map[int]struct{}) []int {
+	if len(candidates) == 0 || len(unsyncedKeyIDs) == 0 {
+		return candidates
+	}
+	keep := make(map[int]struct{})
+	for _, grant := range grants {
+		if _, ok := unsyncedKeyIDs[grant.ChannelKeyID]; ok {
+			keep[grant.ChannelModelID] = struct{}{}
+		}
+	}
+	filtered := make([]int, 0, len(candidates))
+	for _, id := range candidates {
+		if _, ok := keep[id]; !ok {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
+}
+
 // ChannelModelsSync 按探测结果增量更新自动模型与授权。
 // 手动模型和未探测成功的凭据保持不变; 删除的自动模型连同授权一起移除。
 func ChannelModelsSync(
@@ -93,7 +113,39 @@ func ChannelModelsSync(
 		if err := tx.Where("channel_id = ?", channelID).Find(&existing).Error; err != nil {
 			return fmt.Errorf("failed to load channel models: %w", err)
 		}
+		var channelKeys []model.ChannelKey
+		if err := tx.Where("channel_id = ?", channelID).Find(&channelKeys).Error; err != nil {
+			return fmt.Errorf("failed to load channel keys: %w", err)
+		}
+		keyIDByName := make(map[string]int, len(channelKeys))
+		keyNameByID := make(map[int]string, len(channelKeys))
+		for _, channelKey := range channelKeys {
+			keyIDByName[channelKey.Name] = channelKey.ID
+			keyNameByID[channelKey.ID] = channelKey.Name
+		}
+		syncedKeyID := make(map[int]struct{}, len(syncedKeys))
+		for _, keyName := range syncedKeys {
+			if id, ok := keyIDByName[keyName]; ok {
+				syncedKeyID[id] = struct{}{}
+			}
+		}
+		unsyncedKeyID := make(map[int]struct{}, len(channelKeys))
+		for _, channelKey := range channelKeys {
+			if _, ok := syncedKeyID[channelKey.ID]; !ok {
+				unsyncedKeyID[channelKey.ID] = struct{}{}
+			}
+		}
+
 		plan := buildChannelModelSyncPlan(existing, fetched, syncedKeys)
+		// 未同步成功的凭据可能仍在使用某个模型; 只要该模型在它上面还有授权, 本轮就不删除,
+		// 等所有凭据都探测成功后再由后续同步清理。
+		if len(plan.deleteIDs) > 0 && len(unsyncedKeyID) > 0 {
+			var candidateGrants []model.ChannelGrant
+			if err := tx.Where("channel_model_id IN ?", plan.deleteIDs).Find(&candidateGrants).Error; err != nil {
+				return fmt.Errorf("failed to load candidate grants: %w", err)
+			}
+			plan.deleteIDs = filterDeletableModelIDs(plan.deleteIDs, candidateGrants, unsyncedKeyID)
+		}
 		result.Added = append(result.Added, plan.create...)
 		deletedIDs := make(map[int]struct{}, len(plan.deleteIDs))
 		for _, id := range plan.deleteIDs {
@@ -129,22 +181,6 @@ func ChannelModelsSync(
 			}
 			if err := tx.Create(&channelModel).Error; err != nil {
 				return fmt.Errorf("failed to create channel model: %w", err)
-			}
-		}
-		var channelKeys []model.ChannelKey
-		if err := tx.Where("channel_id = ?", channelID).Find(&channelKeys).Error; err != nil {
-			return fmt.Errorf("failed to load channel keys: %w", err)
-		}
-		keyIDByName := make(map[string]int, len(channelKeys))
-		keyNameByID := make(map[int]string, len(channelKeys))
-		for _, channelKey := range channelKeys {
-			keyIDByName[channelKey.Name] = channelKey.ID
-			keyNameByID[channelKey.ID] = channelKey.Name
-		}
-		syncedKeyID := make(map[int]struct{}, len(syncedKeys))
-		for _, keyName := range syncedKeys {
-			if id, ok := keyIDByName[keyName]; ok {
-				syncedKeyID[id] = struct{}{}
 			}
 		}
 		var allModels []model.ChannelModel
