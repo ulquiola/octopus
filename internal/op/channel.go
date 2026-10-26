@@ -237,6 +237,19 @@ func ChannelDel(id int, ctx context.Context) error {
 				return err
 			}
 		}
+		var modelIDs []int
+		if err := tx.Model(&model.ChannelModel{}).Where("channel_id = ?", id).Pluck("id", &modelIDs).Error; err != nil {
+			return fmt.Errorf("failed to load channel models: %w", err)
+		}
+		if len(modelIDs) > 0 {
+			if err := tx.Where("channel_model_id IN ?", modelIDs).
+				Delete(&model.ChannelModelStatsDaily{}).Error; err != nil {
+				return fmt.Errorf("failed to delete channel model daily stats: %w", err)
+			}
+		}
+		if err := tx.Where("channel_id = ?", id).Delete(&model.ChannelStatsDaily{}).Error; err != nil {
+			return fmt.Errorf("failed to delete channel daily stats: %w", err)
+		}
 		if err := tx.Delete(&model.Channel{}, id).Error; err != nil {
 			return fmt.Errorf("failed to delete channel: %w", err)
 		}
@@ -591,6 +604,10 @@ func syncChannelModels(tx *gorm.DB, channelID int, requested []string) error {
 	}
 	if err := clearActiveItems(tx, grantsOf(tx, "channel_model_id", deletedModelIDs)); err != nil {
 		return err
+	}
+	if err := tx.Where("channel_model_id IN ?", deletedModelIDs).
+		Delete(&model.ChannelModelStatsDaily{}).Error; err != nil {
+		return fmt.Errorf("failed to delete channel model daily stats: %w", err)
 	}
 	if err := tx.Delete(&model.ChannelModel{}, deletedModelIDs).Error; err != nil {
 		return fmt.Errorf("failed to delete channel models: %w", err)

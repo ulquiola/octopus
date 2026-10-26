@@ -217,6 +217,8 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				_ = op.ChannelStatsUpdate(channel.ID, metrics)
 				_ = op.ChannelModelStatsUpdate(channelModel.ID, metrics)
 				_ = op.ChannelKeyStatsUpdate(channelKey.ID, metrics)
+				op.ChannelStatsDailyUpdate(channel.ID, metrics)
+				op.ChannelModelStatsDailyUpdate(channelModel.ID, metrics)
 
 				// 成员改变时重新开始累计该成员在本请求内的连续失败次数。
 				if failedItemID == item.ID {
@@ -263,6 +265,8 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 				_ = op.ChannelStatsUpdate(channel.ID, metrics)
 				_ = op.ChannelModelStatsUpdate(channelModel.ID, metrics)
 				_ = op.ChannelKeyStatsUpdate(channelKey.ID, metrics)
+				op.ChannelStatsDailyUpdate(channel.ID, metrics)
+				op.ChannelModelStatsDailyUpdate(channelModel.ID, metrics)
 				request.markCommitted(false)
 				n, err := c.Writer.Write(result.body)
 				if err == nil && n != len(result.body) {
@@ -348,6 +352,8 @@ func Forward(format llm.APIFormat) gin.HandlerFunc {
 			_ = op.ChannelStatsUpdate(channel.ID, metrics)
 			_ = op.ChannelModelStatsUpdate(channelModel.ID, metrics)
 			_ = op.ChannelKeyStatsUpdate(channelKey.ID, metrics)
+			op.ChannelStatsDailyUpdate(channel.ID, metrics)
+			op.ChannelModelStatsDailyUpdate(channelModel.ID, metrics)
 			if err != nil {
 				if ctx.Err() != nil {
 					request.markCanceled(ctx.Err(), string(responseBody), result.usage)

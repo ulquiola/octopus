@@ -31,6 +31,20 @@ type StatsAPIKey struct {
 	StatsMetrics
 }
 
+// 渠道的按天统计; 与累计统计同样按轮次累加, 供首页榜单按周期汇总。
+type ChannelStatsDaily struct {
+	ChannelID int    `json:"channel_id" gorm:"primaryKey"`
+	Date      string `json:"date" gorm:"primaryKey;index"`
+	StatsMetrics
+}
+
+// 渠道模型的按天统计; 模型删除时同步清理。
+type ChannelModelStatsDaily struct {
+	ChannelModelID int    `json:"channel_model_id" gorm:"primaryKey"`
+	Date           string `json:"date" gorm:"primaryKey;index"`
+	StatsMetrics
+}
+
 // Add aggregates another StatsMetrics into the current one.
 func (s *StatsMetrics) Add(delta StatsMetrics) {
 	s.InputToken += delta.InputToken

@@ -112,6 +112,10 @@ func ChannelModelsSync(
 				Delete(&model.ChannelGrant{}).Error; err != nil {
 				return fmt.Errorf("failed to delete channel grants: %w", err)
 			}
+			if err := tx.Where("channel_model_id IN ?", plan.deleteIDs).
+				Delete(&model.ChannelModelStatsDaily{}).Error; err != nil {
+				return fmt.Errorf("failed to delete channel model daily stats: %w", err)
+			}
 			if err := tx.Where("id IN ?", plan.deleteIDs).
 				Delete(&model.ChannelModel{}).Error; err != nil {
 				return fmt.Errorf("failed to delete channel models: %w", err)

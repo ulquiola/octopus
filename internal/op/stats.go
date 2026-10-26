@@ -37,6 +37,14 @@ var statsAPIKeyCache = cache.New[int, model.StatsAPIKey](16)
 var statsAPIKeyCacheNeedUpdate = make(map[int]struct{})
 var statsAPIKeyCacheNeedUpdateLock sync.Mutex
 
+var channelStatsDailyCache = make(map[int]model.ChannelStatsDaily) // 今天的渠道按天统计。
+var channelStatsDailyCacheLock sync.Mutex
+var channelStatsDailyNeedUpdate = make(map[int]struct{})
+
+var channelModelStatsDailyCache = make(map[int]model.ChannelModelStatsDaily) // 今天的渠道模型按天统计。
+var channelModelStatsDailyCacheLock sync.Mutex
+var channelModelStatsDailyNeedUpdate = make(map[int]struct{})
+
 func StatsSaveDBTask() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -71,9 +79,11 @@ func StatsSaveDB(ctx context.Context) error {
 	modelIDs := drainDirtySet(&channelModelStatsNeedUpdateLock, channelModelStatsNeedUpdate)
 	keyIDs := drainDirtySet(&channelKeyStatsNeedUpdateLock, channelKeyStatsNeedUpdate)
 	apiKeyIDs := drainDirtySet(&statsAPIKeyCacheNeedUpdateLock, statsAPIKeyCacheNeedUpdate)
+	channelDailyIDs := drainDirtySet(&channelStatsDailyCacheLock, channelStatsDailyNeedUpdate)
+	modelDailyIDs := drainDirtySet(&channelModelStatsDailyCacheLock, channelModelStatsDailyNeedUpdate)
 
-	if err := persistStatsSnapshots(ctx, totalSnap, dailySnap, hourlyAll, channelIDs, modelIDs, keyIDs, apiKeyIDs); err != nil {
-		restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs)
+	if err := persistStatsSnapshots(ctx, totalSnap, dailySnap, hourlyAll, channelIDs, modelIDs, keyIDs, apiKeyIDs, channelDailyIDs, modelDailyIDs); err != nil {
+		restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs, channelDailyIDs, modelDailyIDs)
 		return err
 	}
 	return nil
@@ -101,11 +111,13 @@ func restoreDirtySet(lock *sync.Mutex, set map[int]struct{}, ids []int) {
 }
 
 // restoreStatsDirty 在统计持久化失败后恢复本批待写标记。
-func restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs []int) {
+func restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs, channelDailyIDs, modelDailyIDs []int) {
 	restoreDirtySet(&channelStatsNeedUpdateLock, channelStatsNeedUpdate, channelIDs)
 	restoreDirtySet(&channelModelStatsNeedUpdateLock, channelModelStatsNeedUpdate, modelIDs)
 	restoreDirtySet(&channelKeyStatsNeedUpdateLock, channelKeyStatsNeedUpdate, keyIDs)
 	restoreDirtySet(&statsAPIKeyCacheNeedUpdateLock, statsAPIKeyCacheNeedUpdate, apiKeyIDs)
+	restoreDirtySet(&channelStatsDailyCacheLock, channelStatsDailyNeedUpdate, channelDailyIDs)
+	restoreDirtySet(&channelModelStatsDailyCacheLock, channelModelStatsDailyNeedUpdate, modelDailyIDs)
 }
 
 func persistStatsSnapshots(
@@ -117,6 +129,8 @@ func persistStatsSnapshots(
 	modelIDs []int,
 	keyIDs []int,
 	apiKeyIDs []int,
+	channelDailyIDs []int,
+	modelDailyIDs []int,
 ) error {
 	dbConn := db.GetDB().WithContext(ctx)
 
@@ -192,7 +206,64 @@ func persistStatsSnapshots(
 		}
 	}
 
+	if err := persistChannelDailyStats(dbConn, channelDailyIDs); err != nil {
+		return err
+	}
+	if err := persistChannelModelDailyStats(dbConn, modelDailyIDs); err != nil {
+		return err
+	}
+	cleanupDailyStats(dbConn)
+
 	return nil
+}
+
+// persistChannelDailyStats 把今天的渠道按天统计写入数据库。
+func persistChannelDailyStats(dbConn *gorm.DB, ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows := make([]model.ChannelStatsDaily, 0, len(ids))
+	channelStatsDailyCacheLock.Lock()
+	for _, id := range ids {
+		if row, ok := channelStatsDailyCache[id]; ok {
+			rows = append(rows, row)
+		}
+	}
+	channelStatsDailyCacheLock.Unlock()
+	if len(rows) == 0 {
+		return nil
+	}
+	return dbConn.Clauses(clause.OnConflict{UpdateAll: true}).Create(&rows).Error
+}
+
+// persistChannelModelDailyStats 把今天的渠道模型按天统计写入数据库。
+func persistChannelModelDailyStats(dbConn *gorm.DB, ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows := make([]model.ChannelModelStatsDaily, 0, len(ids))
+	channelModelStatsDailyCacheLock.Lock()
+	for _, id := range ids {
+		if row, ok := channelModelStatsDailyCache[id]; ok {
+			rows = append(rows, row)
+		}
+	}
+	channelModelStatsDailyCacheLock.Unlock()
+	if len(rows) == 0 {
+		return nil
+	}
+	return dbConn.Clauses(clause.OnConflict{UpdateAll: true}).Create(&rows).Error
+}
+
+// cleanupDailyStats 清理 90 天前的按天统计; 首页榜单最多只查 30 天。
+func cleanupDailyStats(dbConn *gorm.DB) {
+	cutoff := time.Now().AddDate(0, 0, -90).Format("20060102")
+	if err := dbConn.Where("date < ?", cutoff).Delete(&model.ChannelStatsDaily{}).Error; err != nil {
+		log.Warnf("failed to clean channel daily stats: %v", err)
+	}
+	if err := dbConn.Where("date < ?", cutoff).Delete(&model.ChannelModelStatsDaily{}).Error; err != nil {
+		log.Warnf("failed to clean channel model daily stats: %v", err)
+	}
 }
 
 func statsSaveDBWithDailyOverride(ctx context.Context, dailyOverride model.StatsDaily) error {
@@ -211,9 +282,11 @@ func statsSaveDBWithDailyOverride(ctx context.Context, dailyOverride model.Stats
 	modelIDs := drainDirtySet(&channelModelStatsNeedUpdateLock, channelModelStatsNeedUpdate)
 	keyIDs := drainDirtySet(&channelKeyStatsNeedUpdateLock, channelKeyStatsNeedUpdate)
 	apiKeyIDs := drainDirtySet(&statsAPIKeyCacheNeedUpdateLock, statsAPIKeyCacheNeedUpdate)
+	channelDailyIDs := drainDirtySet(&channelStatsDailyCacheLock, channelStatsDailyNeedUpdate)
+	modelDailyIDs := drainDirtySet(&channelModelStatsDailyCacheLock, channelModelStatsDailyNeedUpdate)
 
-	if err := persistStatsSnapshots(ctx, totalSnap, dailyOverride, hourlyAll, channelIDs, modelIDs, keyIDs, apiKeyIDs); err != nil {
-		restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs)
+	if err := persistStatsSnapshots(ctx, totalSnap, dailyOverride, hourlyAll, channelIDs, modelIDs, keyIDs, apiKeyIDs, channelDailyIDs, modelDailyIDs); err != nil {
+		restoreStatsDirty(channelIDs, modelIDs, keyIDs, apiKeyIDs, channelDailyIDs, modelDailyIDs)
 		return err
 	}
 	return nil
@@ -306,6 +379,54 @@ func ChannelStatsUpdate(channelID int, metrics model.StatsMetrics) error {
 	channelCache.Set(channelID, channel)
 	channelStatsNeedUpdate[channelID] = struct{}{}
 	return nil
+}
+
+// ChannelStatsDailyUpdate 累加渠道今天的按天统计; 跨天时先把前一天写入数据库。
+func ChannelStatsDailyUpdate(channelID int, metrics model.StatsMetrics) {
+	today := time.Now().Format("20060102")
+	var stale *model.ChannelStatsDaily
+	channelStatsDailyCacheLock.Lock()
+	entry, ok := channelStatsDailyCache[channelID]
+	if ok && entry.Date != "" && entry.Date != today {
+		snapshot := entry
+		stale = &snapshot
+		entry = model.ChannelStatsDaily{ChannelID: channelID, Date: today}
+	} else if !ok {
+		entry = model.ChannelStatsDaily{ChannelID: channelID, Date: today}
+	}
+	entry.StatsMetrics.Add(metrics)
+	channelStatsDailyCache[channelID] = entry
+	channelStatsDailyNeedUpdate[channelID] = struct{}{}
+	channelStatsDailyCacheLock.Unlock()
+	if stale != nil {
+		if err := db.GetDB().Save(stale).Error; err != nil {
+			log.Warnf("failed to save previous channel daily stats: %v", err)
+		}
+	}
+}
+
+// ChannelModelStatsDailyUpdate 累加渠道模型今天的按天统计; 跨天时先把前一天写入数据库。
+func ChannelModelStatsDailyUpdate(channelModelID int, metrics model.StatsMetrics) {
+	today := time.Now().Format("20060102")
+	var stale *model.ChannelModelStatsDaily
+	channelModelStatsDailyCacheLock.Lock()
+	entry, ok := channelModelStatsDailyCache[channelModelID]
+	if ok && entry.Date != "" && entry.Date != today {
+		snapshot := entry
+		stale = &snapshot
+		entry = model.ChannelModelStatsDaily{ChannelModelID: channelModelID, Date: today}
+	} else if !ok {
+		entry = model.ChannelModelStatsDaily{ChannelModelID: channelModelID, Date: today}
+	}
+	entry.StatsMetrics.Add(metrics)
+	channelModelStatsDailyCache[channelModelID] = entry
+	channelModelStatsDailyNeedUpdate[channelModelID] = struct{}{}
+	channelModelStatsDailyCacheLock.Unlock()
+	if stale != nil {
+		if err := db.GetDB().Save(stale).Error; err != nil {
+			log.Warnf("failed to save previous channel model daily stats: %v", err)
+		}
+	}
 }
 
 func StatsAPIKeyUpdate(apiKeyID int, metrics model.StatsMetrics) error {
@@ -402,6 +523,98 @@ func StatsGetDaily(ctx context.Context, since string) ([]model.StatsDaily, error
 	return statsDaily, nil
 }
 
+// statsPeriodSince 返回周期起始日期; period=1 为今天, 7 为今天加前 6 天。
+func statsPeriodSince(period int, now time.Time) string {
+	days := period - 1
+	if days < 0 {
+		days = 0
+	}
+	return now.AddDate(0, 0, -days).Format("20060102")
+}
+
+// ChannelStatsListPeriod 汇总周期内的渠道与模型统计; period 为 1/7/30。
+// 今天取内存数据, 其余日期取数据库, 避免同一天被重复计算; 无请求的渠道和模型不返回。
+func ChannelStatsListPeriod(period int) []model.ChannelStats {
+	today := time.Now().Format("20060102")
+	since := statsPeriodSince(period, time.Now())
+
+	channelTotals := make(map[int]model.StatsMetrics)
+	modelTotals := make(map[int]model.StatsMetrics)
+
+	var channelDaily []model.ChannelStatsDaily
+	if err := db.GetDB().Where("date >= ? AND date < ?", since, today).Find(&channelDaily).Error; err != nil {
+		log.Warnf("failed to load channel daily stats: %v", err)
+	} else {
+		for _, row := range channelDaily {
+			total := channelTotals[row.ChannelID]
+			total.Add(row.StatsMetrics)
+			channelTotals[row.ChannelID] = total
+		}
+	}
+	var modelDaily []model.ChannelModelStatsDaily
+	if err := db.GetDB().Where("date >= ? AND date < ?", since, today).Find(&modelDaily).Error; err != nil {
+		log.Warnf("failed to load channel model daily stats: %v", err)
+	} else {
+		for _, row := range modelDaily {
+			total := modelTotals[row.ChannelModelID]
+			total.Add(row.StatsMetrics)
+			modelTotals[row.ChannelModelID] = total
+		}
+	}
+
+	channelStatsDailyCacheLock.Lock()
+	for id, row := range channelStatsDailyCache {
+		if row.Date != today {
+			continue
+		}
+		total := channelTotals[id]
+		total.Add(row.StatsMetrics)
+		channelTotals[id] = total
+	}
+	channelStatsDailyCacheLock.Unlock()
+	channelModelStatsDailyCacheLock.Lock()
+	for id, row := range channelModelStatsDailyCache {
+		if row.Date != today {
+			continue
+		}
+		total := modelTotals[id]
+		total.Add(row.StatsMetrics)
+		modelTotals[id] = total
+	}
+	channelModelStatsDailyCacheLock.Unlock()
+
+	stats := make([]model.ChannelStats, 0)
+	for _, channel := range channelCache.GetAll() {
+		metrics := channelTotals[channel.ID]
+		if metrics.RequestSuccess+metrics.RequestFailed == 0 {
+			continue
+		}
+		models := make([]model.ChannelModelStats, 0)
+		for _, channelModel := range channelModelCache.GetAll() {
+			if channelModel.ChannelID != channel.ID {
+				continue
+			}
+			modelMetrics := modelTotals[channelModel.ID]
+			if modelMetrics.RequestSuccess+modelMetrics.RequestFailed == 0 {
+				continue
+			}
+			models = append(models, model.ChannelModelStats{
+				ModelID:      channelModel.ID,
+				ModelName:    channelModel.Name,
+				StatsMetrics: modelMetrics,
+			})
+		}
+		stats = append(stats, model.ChannelStats{
+			ChannelID:    channel.ID,
+			ChannelName:  channel.Name,
+			Enabled:      channel.Enabled,
+			Models:       models,
+			StatsMetrics: metrics,
+		})
+	}
+	return stats
+}
+
 func statsRefreshCache(ctx context.Context) error {
 	dbConn := db.GetDB().WithContext(ctx)
 	today := time.Now().Format("20060102")
@@ -463,6 +676,30 @@ func statsRefreshCache(ctx context.Context) error {
 		}
 	}
 	statsHourlyCacheLock.Unlock()
+
+	var loadedChannelDaily []model.ChannelStatsDaily
+	result = dbConn.Where("date = ?", today).Find(&loadedChannelDaily)
+	if result.Error != nil {
+		return fmt.Errorf("failed to get channel daily stats: %v", result.Error)
+	}
+	channelStatsDailyCacheLock.Lock()
+	channelStatsDailyCache = make(map[int]model.ChannelStatsDaily, len(loadedChannelDaily))
+	for _, v := range loadedChannelDaily {
+		channelStatsDailyCache[v.ChannelID] = v
+	}
+	channelStatsDailyCacheLock.Unlock()
+
+	var loadedModelDaily []model.ChannelModelStatsDaily
+	result = dbConn.Where("date = ?", today).Find(&loadedModelDaily)
+	if result.Error != nil {
+		return fmt.Errorf("failed to get channel model daily stats: %v", result.Error)
+	}
+	channelModelStatsDailyCacheLock.Lock()
+	channelModelStatsDailyCache = make(map[int]model.ChannelModelStatsDaily, len(loadedModelDaily))
+	for _, v := range loadedModelDaily {
+		channelModelStatsDailyCache[v.ChannelModelID] = v
+	}
+	channelModelStatsDailyCacheLock.Unlock()
 
 	return nil
 }
