@@ -160,6 +160,7 @@ function LogDetail({ log, now }: { log: RelayLogOverview; now: number }) {
     const t = useTranslations('log.card');
     const statusT = useTranslations('log.status');
     const [leftTab, setLeftTab] = useState<'request' | 'group'>('group');
+    const [rightTab, setRightTab] = useState<'rounds' | 'content'>('rounds'); // 有重试时默认先展示失败轮次。
     const [detailReady, setDetailReady] = useState(false); // 展开动画结束后才允许加载详情数据。
     const [switchingItemId, setSwitchingItemId] = useState<number | null>(null);
     const requestBody = useLogRequestBody(log.id, log.started_at, detailReady && leftTab === 'request');
@@ -174,7 +175,9 @@ function LogDetail({ log, now }: { log: RelayLogOverview; now: number }) {
     const responseCommitted = log.status === 'committed';
     const requestActive = log.status === 'running' || responseCommitted;
     const rounds = [...(log.rounds ?? [])].reverse();
-    const showRounds = log.status === 'running' || (requestFailed && rounds.length > 0);
+    const showRoundTabs = rounds.length > 1; // 有重试时提供“轮次 / 内容”切换, 成功后也能回看失败原因。
+    const showRoundHistory = requestActive || requestFailed || showRoundTabs;
+    const activeRightTab = requestActive ? 'rounds' : rightTab;
     const isWaitingForSelection = log.status === 'running' && !log.sending && activeGroup?.mode === 'manual' && activeGroup.runtime.current_item_id === 0; // isWaitingForSelection 表示手动模式请求正等待选择渠道。
 
     // 让弹窗先完成展开动画, 避免详情请求及其状态更新占用动画起步帧。
@@ -312,9 +315,27 @@ function LogDetail({ log, now }: { log: RelayLogOverview; now: number }) {
 
                     <div className="flex flex-col rounded-2xl border border-border bg-muted/30 overflow-hidden min-h-0">
                         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-muted/50 px-3 md:px-4">
-                            <span className="text-sm font-medium text-card-foreground">
-                                {isWaitingForSelection ? t('waitingChannelSelection') : showRounds ? t('retryDetails') : requestFailed ? t('errorInfo') : t('responseContent')}
-                            </span>
+                            {showRoundTabs ? (
+                                <Tabs value={activeRightTab} onValueChange={(value) => setRightTab(value as 'rounds' | 'content')}>
+                                    <TabsList variant="text" className="p-0">
+                                        <TabsTrigger value="rounds" className="pr-0">
+                                            {t('retryDetails')}
+                                        </TabsTrigger>
+                                        {!requestActive && (
+                                            <>
+                                                <span aria-hidden="true" className="mx-1 inline-flex h-full -translate-y-px items-center text-sm font-medium leading-none text-muted-foreground/50">/</span>
+                                                <TabsTrigger value="content" className="pl-0">
+                                                    {requestFailed ? t('errorInfo') : t('responseContent')}
+                                                </TabsTrigger>
+                                            </>
+                                        )}
+                                    </TabsList>
+                                </Tabs>
+                            ) : (
+                                <span className="text-sm font-medium text-card-foreground">
+                                    {isWaitingForSelection ? t('waitingChannelSelection') : showRoundHistory ? t('retryDetails') : requestFailed ? t('errorInfo') : t('responseContent')}
+                                </span>
+                            )}
                             <div className="ml-auto flex items-center gap-2">
                                 {log.status === 'running' && log.sending && activeGroup?.mode === 'manual' && (
                                     <button
@@ -369,7 +390,7 @@ function LogDetail({ log, now }: { log: RelayLogOverview; now: number }) {
                                     <Loader2 className="size-4 animate-spin" />
                                     {t('waitingChannelSelection')}
                                 </div>
-                            ) : showRounds ? (
+                            ) : showRoundHistory && activeRightTab === 'rounds' ? (
                                 rounds.length ? (
                                     <div className="divide-y divide-border">
                                         {rounds.map((round) => (
