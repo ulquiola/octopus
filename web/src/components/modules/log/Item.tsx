@@ -107,15 +107,6 @@ function LogMetrics({ log, now, brandColor, variant }: { log: RelayLogOverview; 
     ));
 }
 
-// ObservedRound 保存弹窗打开期间观察到的一轮上游请求状态。
-interface ObservedRound {
-    round: number; // 当前请求内递增的轮次序号。
-    channelKey: string; // 本轮实际请求的渠道名称和 Key 名称, 以空格分隔。
-    error: string; // 本轮最近一次上游错误。
-    sending: boolean; // 本轮是否仍在等待上游响应。
-    startedAt: string; // 服务端记录的本轮开始时间。
-}
-
 // JsonContent 渲染请求或响应正文, 能解析为 JSON 时使用折叠视图, 否则按纯文本展示。
 function JsonContent({ content, fallbackText }: { content: string | object | undefined; fallbackText: string }) {
     const { resolvedTheme } = useTheme();
@@ -165,12 +156,10 @@ function JsonContent({ content, fallbackText }: { content: string | object | und
 }
 
 // LogDetail 渲染日志详情弹窗内容, 仅在弹窗打开期间挂载, 由此避免列表中的卡片持有详情查询和状态。
-function LogDetail({ log, now, errorRounds }: { log: RelayLogOverview; now: number; errorRounds: ObservedRound[] }) {
+function LogDetail({ log, now }: { log: RelayLogOverview; now: number }) {
     const t = useTranslations('log.card');
     const statusT = useTranslations('log.status');
     const [leftTab, setLeftTab] = useState<'request' | 'group'>('group');
-    const [rounds, setRounds] = useState<ObservedRound[]>(errorRounds);
-    const [observedRoundKey, setObservedRoundKey] = useState(''); // observedRoundKey 是已记入 rounds 的最近一次日志快照, 用于跳过重复渲染。
     const [detailReady, setDetailReady] = useState(false); // 展开动画结束后才允许加载详情数据。
     const [switchingItemId, setSwitchingItemId] = useState<number | null>(null);
     const requestBody = useLogRequestBody(log.id, log.started_at, detailReady && leftTab === 'request');
@@ -184,6 +173,7 @@ function LogDetail({ log, now, errorRounds }: { log: RelayLogOverview; now: numb
     const requestFailed = log.status === 'failed' || log.status === 'canceled';
     const responseCommitted = log.status === 'committed';
     const requestActive = log.status === 'running' || responseCommitted;
+    const rounds = [...(log.rounds ?? [])].reverse();
     const showRounds = log.status === 'running' || (requestFailed && rounds.length > 0);
     const isWaitingForSelection = log.status === 'running' && !log.sending && activeGroup?.mode === 'manual' && activeGroup.runtime.current_item_id === 0; // isWaitingForSelection 表示手动模式请求正等待选择渠道。
 
@@ -192,28 +182,6 @@ function LogDetail({ log, now, errorRounds }: { log: RelayLogOverview; now: numb
         const timer = window.setTimeout(() => setDetailReady(true), 600);
         return () => window.clearTimeout(timer);
     }, []);
-
-    // 按轮次记录本次打开期间观察到的上游请求状态, 最新一轮排在最前。
-    // 轮次来自逐次推送的日志, 需在渲染期比对已记录的快照累积, 不能仅由当前 log 推导。
-    const roundKey = log.round === 0 ? '' : `${log.round}:${log.target_channel_key}:${log.sending}:${errorText}`;
-    if (roundKey !== '' && roundKey !== observedRoundKey) {
-        setObservedRoundKey(roundKey);
-        setRounds((current) => {
-            if (!log.sending && current.every((item) => item.round !== log.round)) return current;
-            const previous = current.find((item) => item.round === log.round);
-            const startedAt = previous?.startedAt ?? log.round_started_at;
-            return [
-                {
-                    round: log.round,
-                    channelKey: log.target_channel_key,
-                    error: errorText,
-                    sending: log.sending,
-                    startedAt,
-                },
-                ...current.filter((item) => item.round !== log.round),
-            ];
-        });
-    }
 
     return (
         <MorphingDialogContent className="relative w-[calc(100vw-2rem)] md:w-[80vw] bg-card text-card-foreground px-6 py-4 rounded-3xl h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
@@ -407,9 +375,10 @@ function LogDetail({ log, now, errorRounds }: { log: RelayLogOverview; now: numb
                                         {rounds.map((round) => (
                                             <div key={round.round} className="flex flex-col gap-1.5 px-3 py-2.5 text-xs">
                                                 <div className="flex items-center gap-2">
-                                                    <span className="shrink-0 tabular-nums text-muted-foreground">{formatRoundStartedAt(round.startedAt)}</span>
+                                                    <span className="shrink-0 tabular-nums text-muted-foreground">{formatRoundStartedAt(round.round_started_at)}</span>
                                                     <span className="shrink-0 text-muted-foreground">{t('retryIndex', { index: round.round })}</span>
-                                                    <span className="shrink-0 font-semibold text-foreground">{round.channelKey || '-'}</span>
+                                                    <span className="shrink-0 font-semibold text-foreground">{round.target_channel_key || '-'}</span>
+                                                    <span className="min-w-0 truncate text-muted-foreground">{round.target_model}</span>
                                                     {round.sending ? (
                                                         <Loader2 className="ml-auto size-3.5 animate-spin text-muted-foreground" />
                                                     ) : round.error ? (
@@ -471,19 +440,15 @@ function LogCardBody({ log }: { log: RelayLogOverview }) {
     const t = useTranslations('log.card');
     const { isOpen } = useMorphingDialog();
     const [now, setNow] = useState(() => Date.now());
-    const [displayError, setDisplayError] = useState(log.error ?? ''); // 保留重试期间最近一次错误, 直到响应真正开始。
-    const [errorRounds, setErrorRounds] = useState<ObservedRound[]>(() => log.error ? [{
-        round: log.round,
-        channelKey: log.target_channel_key,
-        error: log.error,
-        sending: log.sending,
-        startedAt: log.round_started_at,
-    }] : []); // 在概览卡片存留期间收集最近五次错误, 供详情打开时直接展示。
     const actualModel = log.target_model || log.model;
     const { Icon, className: iconClassName, color: brandColor } = getModelIcon(actualModel);
     const requestRunning = log.status === 'running' || log.status === 'committed';
-    const errorText = log.error ?? '';
-    const visibleError = log.status === 'committed' || log.status === 'success' ? '' : displayError;
+    const rounds = log.rounds ?? [];
+    const latestFailure = [...rounds].reverse().find((round) => round.error);
+    const visibleError = log.status === 'committed' || log.status === 'success'
+        ? ''
+        : (log.error || latestFailure?.error || '');
+    const retryCount = Math.max(0, rounds.length - 1);
 
     // 仅在请求进行中或弹窗打开时按 500ms 刷新, 避免已完成日志持续触发重渲染。
     useEffect(() => {
@@ -491,29 +456,6 @@ function LogCardBody({ log }: { log: RelayLogOverview }) {
         const timer = window.setInterval(() => setNow(Date.now()), 500);
         return () => window.clearInterval(timer);
     }, [isOpen, requestRunning]);
-
-    // 新错误覆盖旧错误; 响应已开始或请求成功后清除错误提示。
-    useEffect(() => {
-        if (log.status === 'committed' || log.status === 'success') {
-            setDisplayError('');
-        } else if (errorText) {
-            setDisplayError(errorText);
-        }
-    }, [errorText, log.status]);
-
-    useEffect(() => {
-        if (!errorText) return;
-        setErrorRounds((current) => [
-            {
-                round: log.round,
-                channelKey: log.target_channel_key,
-                error: errorText,
-                sending: log.sending,
-                startedAt: log.round_started_at,
-            },
-            ...current.filter((round) => round.round !== log.round),
-        ].slice(0, 5));
-    }, [errorText, log.round, log.target_channel_key, log.sending, log.round_started_at]);
 
     return (
         <>
@@ -551,6 +493,11 @@ function LogCardBody({ log }: { log: RelayLogOverview }) {
                                 <span className="text-muted-foreground truncate">
                                     {actualModel}
                                 </span>
+                                {retryCount > 0 && (
+                                    <span className="shrink-0 text-xs text-muted-foreground">
+                                        {t('retryCount', { count: retryCount })}
+                                    </span>
+                                )}
                             </span>
                         </div>
                         <div className="grid grid-cols-20 gap-x-4 gap-y-2 text-xs tabular-nums text-muted-foreground md:grid-cols-11">
@@ -558,7 +505,7 @@ function LogCardBody({ log }: { log: RelayLogOverview }) {
                         </div>
                         {visibleError && (
                             <div className="p-2.5 rounded-xl bg-destructive/10 border border-destructive/20 overflow-hidden">
-                                <p className="text-xs text-destructive line-clamp-1 whitespace-pre-line">{log.status === 'running' ? `${t('retryIndex', { index: log.round })}: ` : ''}{visibleError}</p>
+                                <p className="text-xs text-destructive line-clamp-1 whitespace-pre-line">{log.status === 'running' && latestFailure ? `${t('retryIndex', { index: latestFailure.round })}: ` : ''}{visibleError}</p>
                             </div>
                         )}
                     </div>
@@ -566,7 +513,7 @@ function LogCardBody({ log }: { log: RelayLogOverview }) {
             </MorphingDialogTrigger>
 
             <MorphingDialogContainer>
-                <LogDetail log={log} now={now} errorRounds={errorRounds} />
+                <LogDetail log={log} now={now} />
             </MorphingDialogContainer>
         </>
     );

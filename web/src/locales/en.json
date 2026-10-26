@@ -426,6 +426,7 @@
             "noResponseContent": "(No response content)",
             "tokens": "tokens",
             "retryIndex": "Retry {index}",
+            "retryCount": "Retried {count} times",
             "retryDetails": "Retry Details",
             "stopRound": "Cancel Current Round",
             "stopFailed": "Failed to cancel current round",

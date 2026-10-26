@@ -426,6 +426,7 @@
             "noResponseContent": "(無回應內容)",
             "tokens": "詞元",
             "retryIndex": "重試 {index}",
+            "retryCount": "已重試 {count} 次",
             "retryDetails": "重試詳情",
             "stopRound": "取消目前輪次",
             "stopFailed": "取消目前輪次失敗",

@@ -100,6 +100,7 @@ func newRequestState(ctx context.Context, modelName, reasoningEffort string, gro
 		GroupID:         groupID,
 		requestBody:     body,
 		apiKeyID:        apiKeyID,
+		Rounds:          []RoundRecord{},
 		requestCtx:      requestCtx,
 		requestCancel:   requestCancel,
 	}
