@@ -23,6 +23,17 @@ const (
 	StatusCanceled  Status = "canceled"  // 客户端提前断开或取消。
 )
 
+// 单轮上游请求的终态快照; 失败原因按轮保留, 不被后续轮次覆盖。
+type RoundRecord struct {
+	Round            int            `json:"round"`
+	RoundStartedAt   time.Time      `json:"round_started_at"`
+	TargetChannelKey string         `json:"target_channel_key"`
+	TargetModel      string         `json:"target_model"`
+	TargetProtocol   model.Protocol `json:"target_protocol"`
+	Sending          bool           `json:"sending"`
+	Error            string         `json:"error,omitempty"`
+}
+
 // 客户端请求的完整进程内状态, 同时作为状态流的消息形状; 上半部分在请求到达时写入并在结束时定稿, 下半部分每轮循环覆盖。
 type RequestState struct {
 	ID                 uint64         `json:"id"`                   // 请求在当前进程内的唯一标识。
@@ -32,22 +43,23 @@ type RequestState struct {
 	FirstTokenDuration time.Duration  `json:"first_token_duration"` // 流式正确响应轮次开始到首字节提交的耗时, 非流式响应为零。
 	StreamDuration     time.Duration  `json:"stream_duration"`      // 流式响应从首字节提交到响应结束的耗时, 非流式响应为零。
 	ResponseDuration   time.Duration  `json:"response_duration"`    // 非流式正确响应轮次开始到完整响应提交的耗时, 流式响应为零。
-	Model           string         `json:"model"`            // 客户端请求的模型名称, 即分组名称。
-	ReasoningEffort string         `json:"reasoning_effort"` // 客户端请求的思考等级, 未指定时为空。
-	Protocol        model.Protocol `json:"protocol"`        // 客户端请求使用的协议, 由入站格式定出, 单个协议位而非掩码组合。
-	GroupID         int            `json:"group_id"`        // 承载本请求的分组 ID, 供界面按主键直接定位分组而不必按名称回查。
-	APIKeyName      string         `json:"api_key_name"`    // 发起请求时的 API Key 名称。
-	Usage           llm.Usage      `json:"usage"`           // 请求结束时写入的展示用量。
-	Cost            float64        `json:"cost"`            // 请求结束时写入的累计费用。
-	OutputChars     int            `json:"output_chars"`    // 流式过程中按事件数量估算并实时累计的输出字符数, 仅用于界面展示, 不参与结算。
+	Model              string         `json:"model"`                // 客户端请求的模型名称, 即分组名称。
+	ReasoningEffort    string         `json:"reasoning_effort"`     // 客户端请求的思考等级, 未指定时为空。
+	Protocol           model.Protocol `json:"protocol"`             // 客户端请求使用的协议, 由入站格式定出, 单个协议位而非掩码组合。
+	GroupID            int            `json:"group_id"`             // 承载本请求的分组 ID, 供界面按主键直接定位分组而不必按名称回查。
+	APIKeyName         string         `json:"api_key_name"`         // 发起请求时的 API Key 名称。
+	Usage              llm.Usage      `json:"usage"`                // 请求结束时写入的展示用量。
+	Cost               float64        `json:"cost"`                 // 请求结束时写入的累计费用。
+	OutputChars        int            `json:"output_chars"`         // 流式过程中按事件数量估算并实时累计的输出字符数, 仅用于界面展示, 不参与结算。
 
-	Round          int            `json:"round"`            // 最新一轮循环的递增序号, 人工中止按此匹配以免误杀下一轮。
-	RoundStartedAt time.Time      `json:"round_started_at"` // 最新一轮上游请求的开始时间。
-	TargetChannelKey string       `json:"target_channel_key"` // 最新一轮选中的渠道名称和 Key 名称, 以空格分隔。
-	TargetModel    string         `json:"target_model"`     // 最新一轮实际请求上游的模型名称。
-	TargetProtocol model.Protocol `json:"target_protocol"`  // 最新一轮实际请求上游的协议, 与 Protocol 不同即本轮做了跨协议转换; 0 表示尚未选出。
-	Sending        bool           `json:"sending"`          // 最新一轮是否仍在等待上游响应。
-	Error          string         `json:"error,omitempty"`  // 最新一轮的失败原因, 请求结束后即为最终错误。
+	Round            int            `json:"round"`              // 最新一轮循环的递增序号, 人工中止按此匹配以免误杀下一轮。
+	RoundStartedAt   time.Time      `json:"round_started_at"`   // 最新一轮上游请求的开始时间。
+	TargetChannelKey string         `json:"target_channel_key"` // 最新一轮选中的渠道名称和 Key 名称, 以空格分隔。
+	TargetModel      string         `json:"target_model"`       // 最新一轮实际请求上游的模型名称。
+	TargetProtocol   model.Protocol `json:"target_protocol"`    // 最新一轮实际请求上游的协议, 与 Protocol 不同即本轮做了跨协议转换; 0 表示尚未选出。
+	Sending          bool           `json:"sending"`            // 最新一轮是否仍在等待上游响应。
+	Error            string         `json:"error,omitempty"`    // 最新一轮的失败原因, 请求结束后即为最终错误。
+	Rounds           []RoundRecord  `json:"rounds"`             // 按发生顺序保留的轮次记录, 最多 maxRounds 条。
 
 	requestBody  string // 客户端原始请求体, 体积大故不进状态流, 由独立接口按需拉取。
 	responseBody string // 聚合后的完整最终响应体, 同样按需拉取。
@@ -62,6 +74,7 @@ type RequestState struct {
 
 const streamBuffer = 16                              // 单个状态流连接的非阻塞消息缓冲容量。
 const maxFinished = 50                               // 进程内最多保留的已结束请求数量。
+const maxRounds = 20                                 // 单个请求最多保留的轮次记录数量。
 const outputPublishInterval = 500 * time.Millisecond // 输出字符数实时推送的最短发布间隔。
 
 var (
@@ -114,6 +127,18 @@ func (r *RequestState) startRound(cancel context.CancelFunc, channelKeyName, mod
 	r.Sending = true
 	r.Error = ""
 	r.roundCancel = cancel
+	rounds := append([]RoundRecord(nil), r.Rounds...)
+	if len(rounds) >= maxRounds {
+		rounds = rounds[len(rounds)-maxRounds+1:]
+	}
+	r.Rounds = append(rounds, RoundRecord{
+		Round:            r.Round,
+		RoundStartedAt:   r.RoundStartedAt,
+		TargetChannelKey: channelKeyName,
+		TargetModel:      modelName,
+		TargetProtocol:   protocol,
+		Sending:          true,
+	})
 	publishRequestLocked(r)
 	return r.Round
 }
@@ -126,6 +151,13 @@ func (r *RequestState) finishRound(errText string) {
 	r.Sending = false
 	r.Error = errText
 	r.roundCancel = nil
+	if len(r.Rounds) > 0 {
+		rounds := append([]RoundRecord(nil), r.Rounds...)
+		last := &rounds[len(rounds)-1]
+		last.Sending = false
+		last.Error = errText
+		r.Rounds = rounds
+	}
 	publishRequestLocked(r)
 }
 
