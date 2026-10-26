@@ -14,6 +14,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/task"
 	"github.com/gin-gonic/gin"
 )
 
@@ -52,6 +53,16 @@ func init() {
 		AddRoute(
 			router.NewRoute("/fetch-model", http.MethodPost).
 				Handle(fetchModel),
+		)
+	router.NewGroupRouter("/api/v1/channel").
+		Use(middleware.Auth()).
+		AddRoute(
+			router.NewRoute("/sync", http.MethodPost).
+				Handle(syncChannel),
+		).
+		AddRoute(
+			router.NewRoute("/last-sync-time", http.MethodGet).
+				Handle(getLastSyncTime),
 		)
 }
 
@@ -214,5 +225,23 @@ func fetchModel(c *gin.Context) {
 		return
 	}
 	resp.Success(c, models)
+}
+
+// syncChannel 手动触发一次渠道模型同步; 已有同步在运行时返回冲突。
+func syncChannel(c *gin.Context) {
+	if err := task.SyncModelsTask(); err != nil {
+		if err.Error() == "model sync already running" {
+			resp.Error(c, http.StatusConflict, err.Error())
+			return
+		}
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, nil)
+}
+
+// getLastSyncTime 返回最近一次模型同步结束时间。
+func getLastSyncTime(c *gin.Context) {
+	resp.Success(c, task.GetLastSyncModelsTime())
 }
 
