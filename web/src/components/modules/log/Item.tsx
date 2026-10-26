@@ -448,7 +448,7 @@ function LogCardBody({ log }: { log: RelayLogOverview }) {
     const visibleError = log.status === 'committed' || log.status === 'success'
         ? ''
         : (log.error || latestFailure?.error || '');
-    const retryCount = Math.max(0, rounds.length - 1);
+    const retryCount = Math.max(0, log.round - 1);
 
     // 仅在请求进行中或弹窗打开时按 500ms 刷新, 避免已完成日志持续触发重渲染。
     useEffect(() => {

@@ -254,4 +254,3 @@ func syncChannel(c *gin.Context) {
 func getLastSyncTime(c *gin.Context) {
 	resp.Success(c, task.GetLastSyncModelsTime())
 }
-
