@@ -247,6 +247,9 @@ func groupRefreshCache(ctx context.Context) error {
 	groupCache.Clear()
 	groupNameIndex.Clear()
 	for _, group := range groups {
+		// 旧版本创建的分组其 relay_config 可能缺少后来新增的字段; 加载时补齐默认值,
+		// 否则首事件超时会按 0 秒计时, 所有流式请求都会立即失败。
+		model.NormalizeGroupRelayConfig(&group.RelayConfig)
 		sortGroupItems(group.Items)
 		groupCache.Set(group.ID, group)
 		groupNameIndex.Set(group.Name, group.ID)
